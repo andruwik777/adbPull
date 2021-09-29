@@ -57,7 +57,8 @@ def adb_process_directory(adbPullParams, androidPath, winOutPath, LONG_PATH_DIR,
 
             command = 'adb ' + adbPullParams + ' pull "' + fullFilePath + '" "' + winFilePath + '"'
             try:
-                timeout = int(size / 100)
+                # 6.8 MB/s (109371824 bytes in 15.414s)
+                timeout = int(size / 1000000)
                 timeout = 5 if timeout < 5 else timeout
                 subprocess.run(command, timeout=timeout)
             except Exception:
