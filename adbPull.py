@@ -5,14 +5,20 @@ import time
 from datetime import datetime
 import argparse
 
+STATIC_SKIP_LIST = ["/dev/usb-ffs/adb"]
+
 LONG_FILES_COUNTER = 0
 WIN_PATH_SEPARATOR = "\\"
 ANDROID_PATH_SEPARATOR = "/"
 LOOONG_PATH_FILES_DIR = "_LOOONG_"
 LOOONG_FILES_FILENAME = "looongFiles.txt"
-LS_DIR_AND_FILES_REGEXP = r"^[-d][xwr-]{9} .*:.*:.*:[^ ]* +(.*)$"
+LS_DIR_AND_FILES_REGEXP = r"^[-d][xwr-]{9} +.*[^ ] +(.*[^ ]) +(.*[^ ]) +(.*[^ ]) +(.*[^ ]) +.*:.*:.*:[^ ]* +(.*)$"
 FORBIDDEN_CHAR_REPLACEMENT_REGEXP = r"_DDD_"
 FORBIDDEN_WINPATH_CHARS_REGEX = r"[\\/:*?<>|]"
+
+
+def log(message):
+    print(message, flush=True)
 
 
 def adb_process_directory(adbPullParams, androidPath, winOutPath, LONG_PATH_DIR, PATH_TO_SKIP):
@@ -24,7 +30,7 @@ def adb_process_directory(adbPullParams, androidPath, winOutPath, LONG_PATH_DIR,
                              encoding="utf8",
                              timeout=5)
     except Exception:
-        print("ERROR: Exception during executing: " + command)
+        log("ERROR: Exception during executing: " + command)
         return
 
     lines = res.stdout.split("\n\n")
@@ -32,27 +38,36 @@ def adb_process_directory(adbPullParams, androidPath, winOutPath, LONG_PATH_DIR,
     for dirContent in lines:
 
         # drwx------    2      4096 Feb  6  2019 u:object_r:app_data_file:s0      dirOrFileIsPlacedHere
-        dirOrFile = getNameFromLsCommand(dirContent)
-        if not dirOrFile:
+        try:
+            size, nameOfDirOrFile = parseLsCommand(dirContent)
+        except Exception:
+            log("ERROR: Exception during parsing size and name of " + dirContent)
+            continue
+
+        if not nameOfDirOrFile:
             # skip any warnings and other not interested data
             continue
 
         if (dirContent.startswith("-")):
-            file = dirOrFile
+            file = nameOfDirOrFile
             dirPath = androidPath if androidPath.endswith(ANDROID_PATH_SEPARATOR) else androidPath + ANDROID_PATH_SEPARATOR
             fullFilePath = file if file.startswith(ANDROID_PATH_SEPARATOR) else dirPath + file
 
-            command = 'adb ' + adbPullParams + ' pull "' + fullFilePath + '" "' + winOutPath + '"'
+            winFilePath = winOutPath + WIN_PATH_SEPARATOR + replaceNotAllowedCharactersInWinPath(file)
+
+            command = 'adb ' + adbPullParams + ' pull "' + fullFilePath + '" "' + winFilePath + '"'
             try:
-                subprocess.run(command, timeout=300)
+                timeout = int(size / 100)
+                timeout = 5 if timeout < 5 else timeout
+                subprocess.run(command, timeout=timeout)
             except Exception:
-                print("ERROR: Eexception during executing: " + command)
+                log("ERROR: Exception during executing: " + command)
         elif (dirContent.startswith("d")):
-            dir = dirOrFile
+            dir = nameOfDirOrFile
             androidDirPath = androidPath + dir if androidPath.endswith(ANDROID_PATH_SEPARATOR) else androidPath + ANDROID_PATH_SEPARATOR + dir
 
             if androidDirPath in PATH_TO_SKIP:
-                print("Skipping " + androidDirPath + " because of script settings")
+                log("Skipping " + androidDirPath + " because of script settings")
                 continue
 
             winDirAdjusted = replaceNotAllowedCharactersInWinPath(dir)
@@ -78,18 +93,17 @@ def adb_process_directory(adbPullParams, androidPath, winOutPath, LONG_PATH_DIR,
                 os.mkdir(winDirPath)
                 adb_process_directory(adbPullParams, androidDirPath, winDirPath, LONG_PATH_DIR, PATH_TO_SKIP)
 
-
 def replaceNotAllowedCharactersInWinPath(dir):
     return re.sub(FORBIDDEN_WINPATH_CHARS_REGEX, FORBIDDEN_CHAR_REPLACEMENT_REGEXP, dir)
 
-
-def getNameFromLsCommand(lsCommandLine):
-    dirOrFile = re.search(LS_DIR_AND_FILES_REGEXP, lsCommandLine)
-    if not dirOrFile:
-        return None
+def parseLsCommand(lsCommandLine):
+    parsed = re.search(LS_DIR_AND_FILES_REGEXP, lsCommandLine)
+    if not parsed:
+        return None, None
     else:
-        res = dirOrFile.group(1)
-        return res
+        size = int(parsed.group(1))
+        name = parsed.group(5)
+        return size, name
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Wraps adb pull on Windows to copy files/dirs from device',
@@ -116,9 +130,10 @@ if __name__ == '__main__':
     optionDisableCompression = args.Z
     adbPullParams = " ".join([optionPreserveMode, optionAlgorithm, optionDisableCompression])
     PATH_TO_SKIP = args.s
+    PATH_TO_SKIP.extend(STATIC_SKIP_LIST)
     LONG_PATH_DIR = windowsOutDir + WIN_PATH_SEPARATOR + LOOONG_PATH_FILES_DIR
 
-    print("STARTED:" + str(datetime.now()))
+    log("STARTED:" + str(datetime.now()))
     for androidDir in androidDirsToPull:
         adb_process_directory(adbPullParams, androidDir, windowsOutDir, LONG_PATH_DIR, PATH_TO_SKIP)
-    print("FINISHED:" + str(datetime.now()))
+    log("FINISHED:" + str(datetime.now()))
